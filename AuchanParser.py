@@ -1,8 +1,26 @@
+import os
 import time
+import datetime
 import requests
 import bs4
 from urllib.parse import urljoin
+import pymysql
+from pymysql import Error
+import dotenv
 
+pymysql.install_as_MySQLdb()
+
+
+dotenv.load_dotenv('.env')
+
+def connect():
+    """ Connect to MySQL database """
+    try:
+        conn = pymysql.connect('localhost', os.getenv('user'), os.getenv('password'), 'Classificator')
+        print('Successfull connection to database')
+        return conn
+    except Error:
+        print('Connection Failed')
 
 start_url = 'https://www.auchan.ru/'
 
@@ -10,6 +28,18 @@ class Parser:
 
     _headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0'
+    }
+    _table = 'auchan_catalogue'
+
+    db_format = {
+        'retailer': 'Auchan',
+        'category_name': '',
+        'category_url': '',
+        'subcategory_name': '',
+        'subcategory_url': '',
+        'product_name': '',
+        'product_url': '',
+        'submission_date': datetime,
     }
 
     def __init__(self, start_url):
@@ -26,6 +56,7 @@ class Parser:
             'product_url': lambda soup: urljoin(self.start_url, soup.find('a', attrs={'class': 'productCardPictureLink css-3d15b0'}).get('href')),
             'product_name': lambda soup: soup.find('a', attrs={'class': 'linkToPDP css-1kl2eos'}).text,
         }
+
 
     @staticmethod
     def _get(*args, **kwargs) -> requests.Response:
@@ -97,24 +128,36 @@ class Parser:
                 continue
         return result
 
+
     def run(self):
-        #получаем категории
         soup = self.soup(self.start_url)
         for category in self.get_categories(soup):
-            print(category) #метод save
-
-            #берем каждую категорию и проверяем на наличие суб-категорий
+            self.db_format['category_name'] = category['category_name']
+            self.db_format['category_url'] = category['category_url']
             url = category['category_url']
             for subcategory in self.get_subcategories(url):
-                print(subcategory) #метод save
-
-                #получаем продукты
+                self.db_format['subcategory_name'] = subcategory['subcategory_name']
+                self.db_format['subcategory_url'] = subcategory['subcategory_url']
                 url = subcategory['subcategory_url']
                 for product in self.get_product(url):
-                    print(product) #метод save
+                    self.db_format['product_name'] = product['product_name']
+                    self.db_format['product_url'] = product['product_url']
+                    self.db_format['submission_date'] = datetime.datetime.now()
+                    self.save(self.db_format)
 
-    def save(self):
-        pass
+
+    def save(self, obj):
+        conn = connect()
+        curr = conn.cursor()
+
+        placeholder = ", ".join(["%s"] * len(obj))
+        stmt = "insert into `{table}` ({columns}) values ({values});".format(table=self._table,
+                                                                             columns=",".join(obj.keys()),
+                                                                             values=placeholder)
+        curr.execute(stmt, list(obj.values()))
+        conn.commit()
+        conn.close()
+
 
 if __name__ == '__main__':
     parser = Parser(start_url)
